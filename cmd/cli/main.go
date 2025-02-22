@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"imkvdb/wal"
 	"os"
 	"strings"
 
@@ -30,7 +31,8 @@ func main() {
 	p := parser.NewParser()
 
 	// Создаем слой compute
-	cmp := compute.NewCompute(p, store, logger)
+	wl := &wal.NoOpWAL{}
+	cmp := compute.NewCompute(p, store, wl, logger)
 
 	// Запускаем цикл чтения команд из stdin
 	reader := bufio.NewReader(os.Stdin)

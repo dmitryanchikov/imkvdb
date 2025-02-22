@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"imkvdb/wal"
 	"os"
 	"strings"
 
@@ -39,10 +40,25 @@ func main() {
 	// Создаем in-memory движок (другого типа пока нет)
 	var eng storage.Storage = engine.NewInMemoryEngine(logger)
 
-	// Создаем слой compute
+	// 4. Создаем parser
 	p := parser.NewParser()
-	cmp := compute.NewCompute(p, eng, logger)
 
+	// 5. Инициализируем compute
+	//    (но внутри compute проверяем, включен ли WAL, если да -> FileWAL, иначе NoOpWAL)
+	var wl wal.WAL
+	if cfg.WAL.Enabled {
+		w, err := wal.NewFileWAL(cfg.WAL, logger)
+		if err != nil {
+			logger.Fatal("failed to create WAL", zap.Error(err))
+		}
+		wl = w
+		// Восстанавливаем данные из WAL:
+		err = wal.ReplayWAL(cfg.WAL.DataDirectory, eng, logger)
+	} else {
+		wl = &wal.NoOpWAL{}
+	}
+
+	cmp := compute.NewCompute(p, eng, wl, logger)
 	// Создаем и запускаем TCP-сервер
 	srv := tcpserver.NewTCPServer(cfg, cmp, logger)
 	if err := srv.Start(); err != nil {

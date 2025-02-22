@@ -2,6 +2,7 @@ package tcpserver
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -48,6 +49,13 @@ func (s *TCPServer) Start() error {
 	go s.acceptLoop()
 
 	return nil
+}
+func (s *TCPServer) Addr() (string, error) {
+	if s.listener == nil {
+		return "", errors.New("server is not listening")
+	}
+
+	return s.listener.Addr().String(), nil
 }
 
 // acceptLoop — бесконечный цикл ожидания новых подключений

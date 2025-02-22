@@ -10,11 +10,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type WALConfig struct {
+	Enabled              bool          `yaml:"enabled"`                // по умолчанию false
+	FlushingBatchSize    int           `yaml:"flushing_batch_size"`    // по умолчанию 100
+	FlushingBatchTimeout time.Duration `yaml:"flushing_batch_timeout"` // по умолчанию 10ms
+	MaxSegmentSize       string        `yaml:"max_segment_size"`       // например "10MB"
+	DataDirectory        string        `yaml:"data_directory"`
+}
+
 // Config — основная структура конфигурации
 type Config struct {
 	Engine  EngineConfig  `yaml:"engine"`
 	Network NetworkConfig `yaml:"network"`
 	Logging LoggingConfig `yaml:"logging"`
+	WAL     WALConfig     `yaml:"wal"`
 }
 
 // EngineConfig — конфигурация движка
@@ -50,6 +59,11 @@ func LoadConfig(path string) (Config, error) {
 	cfg.Network.IdleTimeout = 5 * time.Minute
 	cfg.Logging.Level = "info"
 	cfg.Logging.Output = "stdout"
+	cfg.WAL.Enabled = false
+	cfg.WAL.FlushingBatchSize = 100
+	cfg.WAL.FlushingBatchTimeout = 10 * time.Millisecond
+	cfg.WAL.MaxSegmentSize = "10MB"
+	cfg.WAL.DataDirectory = "/tmp/wal"
 
 	// Пытаемся прочитать файл (если не нашли, не падаем, а оставляем дефолты)
 	data, err := ioutil.ReadFile(path)

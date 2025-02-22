@@ -6,25 +6,28 @@ import (
 	"go.uber.org/zap"
 	"imkvdb/compute/parser"
 	"imkvdb/storage"
+	"imkvdb/wal"
 )
 
 // Compute – интерфейс слоя обработки команд
 type Compute interface {
 	Process(input string) (string, error)
+	ProcessReplay(cmd parser.Command) (string, error) // для восстановления
 }
 
 type compute struct {
-	parser  parser.Parser
-	storage storage.Storage
-	logger  *zap.Logger
+	parser parser.Parser
+	store  storage.Storage
+	logger *zap.Logger
+	wal    wal.WAL
 }
 
-// NewCompute – конструктор для compute
-func NewCompute(p parser.Parser, s storage.Storage, logger *zap.Logger) Compute {
+func NewCompute(p parser.Parser, s storage.Storage, w wal.WAL, l *zap.Logger) Compute {
 	return &compute{
-		parser:  p,
-		storage: s,
-		logger:  logger,
+		parser: p,
+		store:  s,
+		wal:    w,
+		logger: l,
 	}
 }
 
@@ -35,32 +38,49 @@ func (c *compute) Process(input string) (string, error) {
 		c.logger.Error("failed to parse command", zap.Error(err))
 		return "", err
 	}
+	// Модифицирующие операции -> WAL
+	if cmd.Type == parser.SET || cmd.Type == parser.DEL {
+		// 1. Записываем в WAL
+		op := wal.Record{
+			Op:    wal.OpSet,
+			Key:   cmd.Key,
+			Value: cmd.Value,
+		}
+		if cmd.Type == parser.DEL {
+			op.Op = wal.OpDel
+		}
 
+		if err := c.wal.WriteAndWait(op); err != nil {
+			return "", fmt.Errorf("failed to write WAL: %w", err)
+		}
+	}
+	// 2. Пишем в engine
+	return c.applyCommand(cmd)
+}
+
+func (c *compute) ProcessReplay(cmd parser.Command) (string, error) {
+	// вызывается при реплее WAL (не нужно записывать в WAL заново!)
+	return c.applyCommand(cmd)
+}
+
+func (c *compute) applyCommand(cmd parser.Command) (string, error) {
 	switch cmd.Type {
 	case parser.SET:
-		err := c.storage.Set(cmd.Key, cmd.Value)
-		if err != nil {
-			c.logger.Error("failed to SET", zap.Error(err))
-			return "", err
-		}
-		return fmt.Sprintf("OK: key=%s set", cmd.Key), nil
-
-	case parser.GET:
-		val, ok := c.storage.Get(cmd.Key)
+		err := c.store.Set(cmd.Key, cmd.Value)
+		return "OK: SET", err
+	case parser.DEL:
+		ok := c.store.Del(cmd.Key)
 		if !ok {
-			return "", fmt.Errorf("key %s not found", cmd.Key)
+			return "key not found", nil
+		}
+		return "OK: DEL", nil
+	case parser.GET:
+		val, ok := c.store.Get(cmd.Key)
+		if !ok {
+			return "", fmt.Errorf("key not found")
 		}
 		return val, nil
-
-	case parser.DEL:
-		ok := c.storage.Del(cmd.Key)
-		if !ok {
-			return "", fmt.Errorf("key %s not found", cmd.Key)
-		}
-		return fmt.Sprintf("OK: key=%s deleted", cmd.Key), nil
-
 	default:
-		// Теоретически сюда не дойдём, т.к. unknown command отлавливается парсером
-		return "", fmt.Errorf("unknown command type: %v", cmd.Type)
+		return "", fmt.Errorf("unknown command")
 	}
 }
